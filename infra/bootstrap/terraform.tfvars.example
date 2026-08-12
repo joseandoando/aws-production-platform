@@ -1,0 +1,5 @@
+aws_region        = "us-east-1"
+state_bucket_name = "aws-production-platform-tfstate-123456789012"
+github_owner      = "your-github-username"
+github_repository = "aws-production-platform"
+
