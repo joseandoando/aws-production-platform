@@ -1,0 +1,146 @@
+name: Build and deploy to ECS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - ".github/workflows/deploy.yml"
+      - "scripts/smoke-test.sh"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment environment
+        required: true
+        type: choice
+        options: [dev, prod]
+        default: dev
+      image_tag:
+        description: Optional existing immutable image tag to deploy instead of building
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ecs-deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.event.inputs.environment || 'dev' }}
+    if: vars.ENABLE_AWS_DEPLOYMENTS == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-ecs-deploy
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Select immutable image tag
+        id: image
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.image_tag }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          if [[ -n "${REQUESTED_TAG}" ]]; then
+            tag="${REQUESTED_TAG}"
+            build="false"
+          else
+            tag="sha-${GITHUB_SHA::12}"
+            build="true"
+          fi
+          {
+            echo "tag=${tag}"
+            echo "build=${build}"
+            echo "uri=${ECR_REGISTRY}/${ECR_REPOSITORY}:${tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build container image
+        if: steps.image.outputs.build == 'true'
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: docker build --tag "${IMAGE_URI}" .
+
+      - name: Push image to ECR
+        if: steps.image.outputs.build == 'true'
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: docker push "${IMAGE_URI}"
+
+      - name: Create new task definition revision
+        id: task
+        env:
+          ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+          ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${ECS_TASK_FAMILY}" \
+            --query taskDefinition \
+            --output json > current-task-definition.json
+
+          jq --arg image "${IMAGE_URI}" --arg name "${ECS_CONTAINER_NAME}" \
+            '(.containerDefinitions[] | select(.name == $name).image) = $image
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy)' \
+            current-task-definition.json > task-definition.json
+
+          task_definition_arn="$(aws ecs register-task-definition \
+            --cli-input-json file://task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+          echo "arn=${task_definition_arn}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy task definition
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+          TASK_DEFINITION_ARN: ${{ steps.task.outputs.arn }}
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --task-definition "${TASK_DEFINITION_ARN}" \
+            --force-new-deployment >/dev/null
+
+      - name: Wait for ECS service stability
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+        run: aws ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}"
+
+      - name: Smoke test deployment
+        env:
+          APPLICATION_URL: ${{ vars.APPLICATION_URL }}
+        run: bash scripts/smoke-test.sh "${APPLICATION_URL}"
+
+      - name: Deployment summary
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          TASK_DEFINITION_ARN: ${{ steps.task.outputs.arn }}
+        run: |
+          {
+            echo "## ECS deployment"
+            echo "- Environment: ${ENVIRONMENT}"
+            echo "- Image: \`${IMAGE_URI}\`"
+            echo "- Task definition: \`${TASK_DEFINITION_ARN}\`"
+            echo "- Stability waiter: passed"
+            echo "- Smoke test: passed"
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -1,0 +1,110 @@
+name: Terraform CI
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "scripts/terraform-validate.sh"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "scripts/terraform-validate.sh"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to plan
+        required: true
+        type: choice
+        options: [dev, prod]
+        default: dev
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-${{ github.event.inputs.environment || 'dev' }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: Terraform format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.12.2"
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra
+
+  validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.12.2"
+
+      - name: Validate roots
+        run: bash scripts/terraform-validate.sh
+
+      - name: Scan Terraform for high and critical misconfigurations
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  plan:
+    name: Terraform plan (${{ github.event.inputs.environment || 'dev' }})
+    if: vars.ENABLE_AWS_DEPLOYMENTS == 'true'
+    needs: [format, validate]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    defaults:
+      run:
+        working-directory: infra/environments/${{ github.event.inputs.environment || 'dev' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.12.2"
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-terraform-plan
+
+      - name: Initialize remote state
+        run: >-
+          terraform init -input=false
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=environments/${{ github.event.inputs.environment || 'dev' }}/terraform.tfstate"
+          -backend-config="region=${{ vars.AWS_REGION }}"
+          -backend-config="encrypt=true"
+          -backend-config="kms_key_id=${{ vars.TF_STATE_KMS_KEY_ARN }}"
+          -backend-config="use_lockfile=true"
+
+      - name: Create plan
+        run: terraform plan -input=false -lock-timeout=5m -out=tfplan
+
+      - name: Summarize plan
+        run: terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"

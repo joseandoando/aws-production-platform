@@ -1,0 +1,65 @@
+name: Application CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: application-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: python -m ruff check app tests
+
+      - name: Test
+        run: python -m pytest
+
+  docker:
+    name: Docker build and smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build image
+        run: docker build --tag "aws-production-platform:${GITHUB_SHA}" .
+
+      - name: Verify removed build-only packages
+        run: >-
+          docker run --rm "aws-production-platform:${GITHUB_SHA}"
+          python -c "import importlib.util;
+          assert importlib.util.find_spec('setuptools') is None;
+          assert importlib.util.find_spec('msgpack') is None"
+
+      - name: Scan image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: aws-production-platform:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          ignorefile: .trivyignore
+          exit-code: "1"
+
+      - name: Smoke-test image
+        run: bash scripts/docker-smoke-test.sh "aws-production-platform:${GITHUB_SHA}"
