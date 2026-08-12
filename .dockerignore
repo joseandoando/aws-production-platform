@@ -3,10 +3,11 @@
 .terraform
 infra
 docs
+local
 tests
 work
 outputs
+compose.local.yml
 *.tfstate*
 .env*
 README.md
-

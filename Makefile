@@ -1,4 +1,5 @@
-.PHONY: test lint docker-build docker-smoke terraform-fmt terraform-validate security check
+.PHONY: test lint docker-build docker-smoke terraform-fmt terraform-validate security check \
+	local-up local-plan local-apply local-test local-deploy local-status local-scale local-down local-reset
 
 IMAGE_NAME ?= aws-production-platform:local
 
@@ -26,3 +27,30 @@ security: docker-build
 	trivy config --skip-check-update --severity HIGH,CRITICAL --exit-code 1 infra
 
 check: lint test terraform-fmt terraform-validate docker-smoke security
+
+local-up:
+	bash scripts/local-lab.sh up
+
+local-plan:
+	bash scripts/local-lab.sh plan
+
+local-apply:
+	bash scripts/local-lab.sh apply
+
+local-test:
+	bash scripts/local-lab.sh test
+
+local-deploy:
+	bash scripts/local-lab.sh deploy
+
+local-status:
+	bash scripts/local-lab.sh status
+
+local-scale:
+	bash scripts/local-lab.sh scale $(REPLICAS)
+
+local-down:
+	bash scripts/local-lab.sh down
+
+local-reset:
+	bash scripts/local-lab.sh reset

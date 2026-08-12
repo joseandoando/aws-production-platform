@@ -2,6 +2,7 @@
 
 [![Application CI](https://github.com/joseandoando/aws-production-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/joseandoando/aws-production-platform/actions/workflows/ci.yml)
 [![Terraform CI](https://github.com/joseandoando/aws-production-platform/actions/workflows/terraform.yml/badge.svg)](https://github.com/joseandoando/aws-production-platform/actions/workflows/terraform.yml)
+[![Local AWS simulation](https://github.com/joseandoando/aws-production-platform/actions/workflows/local-lab.yml/badge.svg)](https://github.com/joseandoando/aws-production-platform/actions/workflows/local-lab.yml)
 
 A production-oriented AWS reference platform built to demonstrate practical DevOps, Site Reliability Engineering, and cloud engineering skills: modular infrastructure as code, private networking, identity federation, immutable container delivery, health-based rollouts, autoscaling, monitoring, and operational documentation.
 
@@ -19,6 +20,7 @@ A production-oriented AWS reference platform built to demonstrate practical DevO
 - GitHub Actions authentication through OIDC—no long-lived AWS access keys
 - Immutable image deployment, ECS stability waiting, smoke testing, and documented rollback
 - A non-root, read-only-container Python API with liveness and readiness endpoints
+- A zero-cost local integration lab using LocalStack, Docker Compose, NGINX, and PostgreSQL
 
 ## Architecture
 
@@ -69,7 +71,7 @@ Production uses a NAT gateway per AZ, two baseline tasks, Multi-AZ RDS, 30-day d
 |---|---|---|
 | `GET /` | Service metadata | `200` with service, environment, and timestamp |
 | `GET /health` | Liveness for Docker, ECS, and ALB | `200` while the process can serve requests |
-| `GET /ready` | Readiness for post-deployment smoke tests | `200` after startup |
+| `GET /ready` | Readiness for post-deployment smoke tests | `200` when the optional dependency check passes |
 
 Run it locally:
 
@@ -82,6 +84,20 @@ docker build -t aws-production-platform:local .
 bash scripts/docker-smoke-test.sh aws-production-platform:local
 ```
 
+## Zero-cost local AWS lab
+
+Run an end-to-end simulation without an AWS account, real cloud credentials, or LocalStack auth token:
+
+```bash
+make local-up
+curl http://127.0.0.1:8080/ready
+make local-status
+```
+
+The lab uses LocalStack Community for IAM, S3/KMS, Secrets Manager metadata, CloudWatch Logs, and alarms. Docker Compose provides two API replicas as ECS/Fargate analogues, NGINX as the ALB analogue, the local Docker image store as ECR, and PostgreSQL as RDS. `make local-up` applies a separate local Terraform root and runs integration checks automatically.
+
+This is intentionally described as a **simulation**: it validates application and infrastructure workflows locally, but it does not reproduce AWS networking or prove that the real AWS platform has been deployed. See the [local lab architecture, commands, security boundaries, and limitations](docs/local-development.md).
+
 ## Repository layout
 
 ```text
@@ -89,16 +105,18 @@ app/                         Flask API
 tests/                       Endpoint tests
 infra/bootstrap/             State bucket and GitHub OIDC IAM roles
 infra/environments/dev/      Development Terraform root
+infra/environments/local/    Token-free LocalStack Terraform root
 infra/environments/prod/     Production Terraform root
 infra/modules/               Network, ECR, ECS, RDS, platform, and OIDC modules
 .github/workflows/           Application CI, Terraform CI/plan, and ECS deployment
-scripts/                     Validation, environment configuration, and smoke tests
+local/                       NGINX load-balancer configuration for the local lab
+scripts/                     Validation, local automation, configuration, and smoke tests
 docs/                        Architecture, security, delivery, cost, and operations guides
 ```
 
 ## CI/CD at a glance
 
-Pull requests and pushes run Python lint/tests, a Docker build and container smoke test, `terraform fmt`, and `terraform validate`. AWS-backed plans and deployments remain skipped until `ENABLE_AWS_DEPLOYMENTS=true` is intentionally configured.
+Pull requests and pushes run Python lint/tests, a Docker build and container smoke test, `terraform fmt`, `terraform validate`, and the zero-cost local AWS simulation. AWS-backed plans and deployments remain skipped until `ENABLE_AWS_DEPLOYMENTS=true` is intentionally configured.
 
 When enabled, a deployment:
 
@@ -128,6 +146,8 @@ See the full [security rationale](docs/security.md), [architecture and networkin
 
 Illustrative `us-east-1` on-demand cost at low traffic is roughly **$90–130/month for dev** and **$250–350/month for prod**. NAT gateways, the ALB, and RDS dominate the baseline; traffic, logs, backups, public IPv4, and taxes can increase it. These are planning ranges—not quotes—and should be recalculated before deployment. See [cost assumptions and optimization options](docs/costs.md).
 
+The local simulation has no AWS service charge; it uses only the developer machine or CI runner.
+
 ## Production improvements
 
 Before using this as a real production platform, add a custom domain and mandatory TLS, WAF, VPC endpoints, centralized alert routing, RDS proxy and application database integration, cross-account environment isolation, AWS Config/GuardDuty/Security Hub, load and recovery testing, and policy-as-code scanning. The prioritized roadmap is in [production improvements](docs/production-improvements.md).
@@ -140,9 +160,9 @@ Before using this as a real production platform, add a custom domain and mandato
 - [Monitoring and incident response](docs/operations.md)
 - [Estimated AWS costs](docs/costs.md)
 - [Production improvements](docs/production-improvements.md)
+- [Zero-cost local AWS simulation](docs/local-development.md)
 - [Contributing](CONTRIBUTING.md) and [security reporting](SECURITY.md)
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-

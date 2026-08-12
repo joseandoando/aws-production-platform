@@ -5,6 +5,7 @@ root_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 terraform_roots=(
   "infra/bootstrap"
   "infra/environments/dev"
+  "infra/environments/local"
   "infra/environments/prod"
 )
 
@@ -14,4 +15,3 @@ for relative_directory in "${terraform_roots[@]}"; do
   terraform -chdir="${directory}" init -backend=false -input=false >/dev/null
   terraform -chdir="${directory}" validate
 done
-
