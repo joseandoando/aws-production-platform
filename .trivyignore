@@ -1,0 +1,6 @@
+# The pinned official Python base image's embedded SBOM lists these packages,
+# but the final image removes both. Runtime `pip show` verification is part of
+# the local security check; keep these exceptions scoped to the pinned digest.
+GHSA-6v7p-g79w-8964
+CVE-2025-47273
+

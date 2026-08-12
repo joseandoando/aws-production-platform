@@ -1,0 +1,42 @@
+.DS_Store
+.idea/
+.vscode/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+/work/
+/outputs/
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.auto.tfvars
+!*.auto.tfvars.example
+terraform.tfvars
+!terraform.tfvars.example
+backend.hcl
+!backend.hcl.example
+/infra/bootstrap/backend.tf
+
+# Generated deployment artifacts
+task-definition.json
+deployment-output.json

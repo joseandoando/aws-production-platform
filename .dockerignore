@@ -1,0 +1,12 @@
+.git
+.github
+.terraform
+infra
+docs
+tests
+work
+outputs
+*.tfstate*
+.env*
+README.md
+
