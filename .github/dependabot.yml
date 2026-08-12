@@ -12,4 +12,7 @@ updates:
     directory: "/infra/environments/dev"
     schedule:
       interval: weekly
-
+  - package-ecosystem: terraform
+    directory: "/infra/environments/local"
+    schedule:
+      interval: weekly

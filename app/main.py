@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import time
 from datetime import datetime, timezone
 
@@ -14,6 +15,8 @@ def create_app() -> Flask:
     app = Flask(__name__)
     started_at = time.monotonic()
     app_env = os.getenv("APP_ENV", "development")
+    readiness_host = os.getenv("READINESS_TCP_HOST")
+    readiness_port = os.getenv("READINESS_TCP_PORT")
 
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -36,7 +39,16 @@ def create_app() -> Flask:
 
     @app.get("/ready")
     def ready():
-        """Readiness: this stateless example is ready after application startup."""
+        """Readiness: optionally verify that a configured TCP dependency is reachable."""
+        if readiness_host and readiness_port:
+            try:
+                connection = socket.create_connection(
+                    (readiness_host, int(readiness_port)), timeout=1
+                )
+                connection.close()
+            except (OSError, ValueError):
+                return jsonify(status="not_ready", dependency="tcp"), 503
+
         return jsonify(status="ready")
 
     return app
